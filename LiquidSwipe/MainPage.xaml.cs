@@ -108,7 +108,6 @@ namespace LiquidSwipe
             for (var i = 0; i < MaxShapeCount; i++)
             {
                 var shape = _c.CreateSpriteShape(_c.CreatePathGeometry(GetClip(_rootSize)));
-                shape.ImplicitAnimations = _slideLeftImplicitAnimationCollection;
                 shape.Offset = HideOffset;
                 shape.FillBrush = _c.CreateColorBrush(_colors[i]);
                 _rootShape.Shapes.Add(shape);
