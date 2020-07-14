@@ -46,25 +46,21 @@ namespace LiquidSwipe
             Right
         }
 
-        public const int MaxShapeCount = 5;
+        public const int MaxLayerCount = 5;
 
         private Compositor _c;
         private ICompositionGenerator _g;
         private ShapeVisual _rootShape;
+        private readonly Color[] _colors;
 
+        // Animation Timeline
         private Stopwatch _sw0;
         private Stopwatch _sw1;
         private Stopwatch _sw2;
         private TimeSpan _a0;
         private TimeSpan _a1;
-        private const float SwipeLeftStart = 0f;
-        private const float SwipeLeftEnd = 1.1f;
-        private const float SwipeRightStart = 1f;
-        private const float SwipeRightEnd = -0.5f;
 
-        private float _startVal;
-        private float _endVal;
-
+        // Geometry
         private float _revealPercent;
         private float _verticalReveal;
         private float waveCenterY;
@@ -72,9 +68,8 @@ namespace LiquidSwipe
         private float waveVertRadius;
         private float sideWidth;
         private SlideDirection slideDirection;
-        private readonly Color[] _colors;
-        private int _selIndex;
 
+        // Offset 
         private readonly Vector2 HideOffset = new Vector2(100, 0);
         private const float MinOffsetX = 0f;
         private const float MaxOffsetX = 100f;
@@ -86,15 +81,20 @@ namespace LiquidSwipe
         private Size _rootSize;
 
         // Interaction
+        private SwipeDirection _swipeDir;
         private Point _swipeStartPoint;
         private bool _isPointerDown;
         private bool _isSwiping;
-        private SwipeDirection _swipeDir;
         private int _swipeLeftIndex;
         private int _swipeRightIndex;
         private int _nextLeftIndex;
         private int _nextRightIndex;
         private int _nextShapeIndex;
+        private int _selectedIndex;
+        private float _swipeStartX;
+        private float _swipeEndX;
+        private const float SwipeLeftEnd = 1.1f;
+        private const float SwipeRightEnd = -0.5f;
         private const float SwipeDistanceThreshold = 20f;
         private const float DefaultGeometryAnimDuration = 500;
         private const float SwipeThreshold = 0.25f;
@@ -149,21 +149,7 @@ namespace LiquidSwipe
 
             _rootShape.Shapes.Add(bgShape);
 
-            //_slideLeftImplicitAnimationCollection = _c.CreateImplicitAnimationCollection();
-            //var slideLeftAnim = _c.GenerateVector2KeyFrameAnimation()
-            //                   .HavingDuration(700)
-            //                   .ForTarget(() => _c.CreateSpriteShape().Offset);
-            //slideLeftAnim.InsertFinalValueKeyFrame(1f, _c.CreateEaseInOutBackEasingFunction());
-            //_slideLeftImplicitAnimationCollection["Offset"] = slideLeftAnim.Animation;
-
-            //_slideRightImplicitAnimationCollection = _c.CreateImplicitAnimationCollection();
-            //var slideRightAnim = _c.GenerateVector2KeyFrameAnimation()
-            //    .HavingDuration(2000)
-            //    .ForTarget(() => _c.CreateSpriteShape().Offset);
-            //slideRightAnim.InsertFinalValueKeyFrame(1f, _c.CreateEaseInOutBackEasingFunction());
-            //_slideRightImplicitAnimationCollection["Offset"] = slideRightAnim.Animation;
-
-            for (var i = 0; i < MaxShapeCount; i++)
+            for (var i = 0; i < MaxLayerCount; i++)
             {
                 var shape = _c.CreateSpriteShape(_c.CreatePathGeometry(GetClip(_rootSize, 0f)));
                 // Offset each of the shape to the right to hide the bump of lower layers
@@ -172,15 +158,14 @@ namespace LiquidSwipe
                 _rootShape.Shapes.Add(shape);
             }
 
-            _selIndex = -1;
+            _selectedIndex = -1;
             _swipeRightIndex = -1;
-            _swipeLeftIndex = MaxShapeCount;
+            _swipeLeftIndex = MaxLayerCount;
             _nextShapeIndex = -1;
             // Reset offset of top most shape
-            _rootShape.Shapes[MaxShapeCount].Offset = Vector2.Zero;
+            _rootShape.Shapes[MaxLayerCount].Offset = Vector2.Zero;
 
             ElementCompositionPreview.SetElementChildVisual(RenderGrid, _rootShape);
-            //PrevBtn.IsEnabled = false;
         }
 
         private void OnDraw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
@@ -190,61 +175,52 @@ namespace LiquidSwipe
                 return;
             }
 
-            try
+            if (_isSwiping && _selectedIndex != -1)
             {
-                if (_isSwiping && _selIndex != -1)
+                ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_selectedIndex)).Geometry).Path = GetClip(_rootSize, _revealPercent);
+
+                if (_nextShapeIndex != -1)
                 {
-                    Debug.WriteLine($"Rendering Geometry for _selIndex = {_selIndex} at _revealPercent = {_revealPercent}");
-                    ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_selIndex)).Geometry).Path = GetClip(_rootSize, _revealPercent);
-
-                    if (_nextShapeIndex != -1)
-                    {
-                        Debug.WriteLine($"Moving _nextShapeIndex = {_nextShapeIndex} to ({_currOffsetX}, 0)");
-                        ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Geometry).Path = GetClip(_rootSize, 0f);
-                        ((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Offset = new Vector2(_currOffsetX, 0);
-                    }
-
-                    return;
+                    ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Geometry).Path = GetClip(_rootSize, 0f);
+                    ((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Offset = new Vector2(_currOffsetX, 0);
                 }
 
-                if (_sw1.IsRunning)
+                return;
+            }
+
+            if (_sw1.IsRunning)
+            {
+                // Calculate the progress on the animation timeline
+                var elapsed = _sw1.ElapsedMilliseconds;
+                var t = Math.Min(1f, (float)(elapsed / _a0.TotalMilliseconds));
+                var revealPercent = Lerp(_swipeStartX, _swipeEndX, EaseInOut(t));
+
+                ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_selectedIndex)).Geometry).Path = GetClip(_rootSize, revealPercent);
+
+                // Check if animation has completed
+                if (elapsed >= (long)_a0.TotalMilliseconds)
                 {
-                    var elapsed = _sw1.ElapsedMilliseconds;
-                    var t = Math.Min(1f, (float)(elapsed / _a0.TotalMilliseconds));
-                    var revealPercent = Lerp(_startVal, _endVal, EaseInOut(t));
-
-                    ((CompositionPathGeometry)((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_selIndex)).Geometry).Path = GetClip(_rootSize, revealPercent);
-
-                    Debug.WriteLine($"\tRendering Geometry anim for _selIndex = {_selIndex} at revealPercent = {revealPercent} _startVal = {_startVal} _endVal = {_endVal}");
-                    if (elapsed >= (long)_a0.TotalMilliseconds)
-                    {
-                        _sw1.Reset();
-                        _selIndex = -1;
-                        _swipeLeftIndex = _nextLeftIndex;
-                        _swipeRightIndex = _nextRightIndex;
-
-                        Debug.WriteLine($"\t\t_swipeRightIndex = {_swipeRightIndex} _swipeLeftIndex = {_swipeLeftIndex}");
-                    }
-                }
-
-                if (_sw2.IsRunning && _nextShapeIndex != -1)
-                {
-                    var elapsed = _sw2.ElapsedMilliseconds;
-                    var t1 = Math.Min(1f, (float)(elapsed / _a1.TotalMilliseconds));
-                    var offsetX = Lerp(_startOffsetX, _endOffsetX, EaseOut(t1));
-                    ((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Offset = new Vector2(offsetX, 0);
-                    Debug.WriteLine($"\tRendering offset anim for nextShapeIndex = {_nextShapeIndex} at ({offsetX}, 0)");
-
-                    if (elapsed >= (long)_a1.TotalMilliseconds)
-                    {
-                        _sw2.Reset();
-                        _nextShapeIndex = -1;
-                    }
+                    _sw1.Reset();
+                    _selectedIndex = -1;
+                    _swipeLeftIndex = _nextLeftIndex;
+                    _swipeRightIndex = _nextRightIndex;
                 }
             }
-            catch (Exception e)
+
+            if (_sw2.IsRunning && _nextShapeIndex != -1)
             {
-                var msg = e.Message;
+                // Calculate the progress on the animation timeline
+                var elapsed = _sw2.ElapsedMilliseconds;
+                var t1 = Math.Min(1f, (float)(elapsed / _a1.TotalMilliseconds));
+                var offsetX = Lerp(_startOffsetX, _endOffsetX, EaseOut(t1));
+                ((CompositionSpriteShape)_rootShape.Shapes.ElementAt(_nextShapeIndex)).Offset = new Vector2(offsetX, 0);
+
+                // Check if animation has completed
+                if (elapsed >= (long)_a1.TotalMilliseconds)
+                {
+                    _sw2.Reset();
+                    _nextShapeIndex = -1;
+                }
             }
         }
 
@@ -493,6 +469,7 @@ namespace LiquidSwipe
 
         private void HandlePointerPressed(object sender, PointerRoutedEventArgs e)
         {
+            // Don't interact if any of the animations are still running
             if (_sw1.IsRunning || _sw1.IsRunning)
             {
                 return;
@@ -542,8 +519,7 @@ namespace LiquidSwipe
                 _isSwiping = true;
                 _swipeDir = currSwipeDir;
 
-                _selIndex = _swipeDir == SwipeDirection.Left ? _swipeLeftIndex : _swipeRightIndex;
-                Debug.WriteLine($"\n\tSwiping started for _selIndex = {_selIndex} in the direction {_swipeDir}");
+                _selectedIndex = _swipeDir == SwipeDirection.Left ? _swipeLeftIndex : _swipeRightIndex;
             }
             // If the user is swiping in the opposite direction to the original swipe and has crossed the _swipeStartPoint
             else if (_swipeDir != currSwipeDir)
@@ -555,7 +531,7 @@ namespace LiquidSwipe
             }
 
             // Get the index of the shape below the shape being currently swiped
-            _nextShapeIndex = _selIndex > 1 ? _selIndex - 1 : -1;
+            _nextShapeIndex = _selectedIndex > 1 ? _selectedIndex - 1 : -1;
 
             // Swipe is proceeding in the original swipe direction
             var percent = Math.Min((float)(diffX * 2 / _rootSize.Width), 1f);
@@ -571,11 +547,6 @@ namespace LiquidSwipe
                     _currOffsetX = Lerp(MinOffsetX, MaxOffsetX, EaseOut(percent));
                     break;
             }
-
-            //// Update to the next valid index
-            //_nextLeftIndex = _swipeLeftIndex;
-            //_nextRightIndex = _swipeRightIndex;
-
         }
 
         private void HandlePointerReleased(object sender, PointerRoutedEventArgs e)
@@ -613,6 +584,9 @@ namespace LiquidSwipe
             }
             else
             {
+                // Since the user has completed interaction for the current swipe, check if it is a valid swipe.
+                // If yes, then animate the shape to its final destination otherwise animate to return to its
+                // initial location.
                 var diffX = Math.Abs(currPoint.X - _swipeStartPoint.X);
                 var swipePercent = Math.Min((float)(diffX * 2 / _rootSize.Width), 1f);
 
@@ -629,50 +603,44 @@ namespace LiquidSwipe
                 switch (_swipeDir)
                 {
                     case SwipeDirection.Left:
-                        _startVal = swipePercent;
+                        _swipeStartX = swipePercent;
                         _startOffsetX = Lerp(MaxOffsetX, MinOffsetX, EaseOut(swipePercent));
                         if (isValidSwipe)
                         {
-                            _endVal = SwipeLeftEnd;
+                            _swipeEndX = SwipeLeftEnd;
                             // Update to the next valid index
-                            _nextLeftIndex = _selIndex <= 2 ? -1 : _selIndex - 1;
-                            _nextRightIndex = _selIndex;
+                            _nextLeftIndex = _selectedIndex <= 2 ? -1 : _selectedIndex - 1;
+                            _nextRightIndex = _selectedIndex;
                             _endOffsetX = MinOffsetX;
-                            Debug.WriteLine($"Pointer Released with Valid Swipe Left and _nextLeftIndex = {_nextLeftIndex} _nextRightIndex = {_nextRightIndex}");
                         }
                         else
                         {
-                            _endVal = SwipeRightEnd;
+                            _swipeEndX = SwipeRightEnd;
                             _endOffsetX = MaxOffsetX;
                             _nextLeftIndex = _swipeLeftIndex;
                             _nextRightIndex = _swipeRightIndex;
-                            Debug.WriteLine($"Pointer Released with INVALID Swipe Left and _nextLeftIndex = {_nextLeftIndex} _nextRightIndex = {_nextRightIndex}");
                         }
                         break;
                     case SwipeDirection.Right:
-                        _startVal = 1 - swipePercent;
+                        _swipeStartX = 1 - swipePercent;
                         _startOffsetX = Lerp(MinOffsetX, MaxOffsetX, EaseOut(swipePercent));
                         if (isValidSwipe)
                         {
-                            _endVal = SwipeRightEnd;
+                            _swipeEndX = SwipeRightEnd;
                             // Update to the next valid index
-                            _nextLeftIndex = _selIndex;
-                            _nextRightIndex = _selIndex >= MaxShapeCount ? -1 : _selIndex + 1;
+                            _nextLeftIndex = _selectedIndex;
+                            _nextRightIndex = _selectedIndex >= MaxLayerCount ? -1 : _selectedIndex + 1;
                             _endOffsetX = MaxOffsetX;
-                            Debug.WriteLine($"Pointer Released with Valid Swipe Right and _nextLeftIndex = {_nextLeftIndex} _nextRightIndex = {_nextRightIndex}");
                         }
                         else
                         {
-                            _endVal = SwipeLeftEnd;
+                            _swipeEndX = SwipeLeftEnd;
                             _endOffsetX = MinOffsetX;
                             _nextLeftIndex = _swipeLeftIndex;
                             _nextRightIndex = _swipeRightIndex;
-                            Debug.WriteLine($"Pointer Released with INVALID Swipe Right and _nextLeftIndex = {_nextLeftIndex} _nextRightIndex = {_nextRightIndex}");
                         }
                         break;
                 }
-
-                //Debug.WriteLine($"_nextRightIndex = {_nextRightIndex} _nextLeftIndex = {_nextLeftIndex}");
 
                 _sw1.Start();
                 _sw2.Start();
