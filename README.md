@@ -6,6 +6,6 @@ More details [here](https://wpfspark.wordpress.com/2020/07/10/liquid-swipe/).
 
 <img src="https://user-images.githubusercontent.com/7021835/87165139-9635d680-c27e-11ea-8531-cdb81177087e.gif" />
 
-Swipe interactions have now been added to the code.
+Swipe interactions have now been added to the code. Click on the image below to watch the video.
 
 [![Watch the video](https://img.youtube.com/vi/e9oSz4pLEgw/maxresdefault.jpg)](https://youtu.be/e9oSz4pLEgw)
